@@ -1,0 +1,22 @@
+[project]
+name = "mailback"
+version = "0.1.0"
+description = "Backend platform for mailbox aggregation and a unified REST API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic-settings",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    "python-multipart",
+    "boto3",
+    "httpx",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

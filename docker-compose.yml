@@ -1,0 +1,42 @@
+services:
+  api:
+    build: .
+    container_name: mailback-api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - minio
+    volumes:
+      - .:/app
+
+  postgres:
+    image: postgres:16
+    container_name: mailback-postgres
+    environment:
+      POSTGRES_DB: mailback
+      POSTGRES_USER: mailback
+      POSTGRES_PASSWORD: mailback
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio
+    container_name: mailback-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: mailback
+      MINIO_ROOT_PASSWORD: mailbackpass
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+  minio_data:
