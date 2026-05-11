@@ -1,7 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from app.connectors.base import ConnectorFolder, ConnectorMessage, ConnectorSendResult
+from app.connectors.base import (
+    ConnectorFolder,
+    ConnectorMessage,
+    ConnectorOutgoingAttachment,
+    ConnectorSendResult,
+)
 
 
 class FakeMailboxConnector:
@@ -66,6 +71,7 @@ class FakeMailboxConnector:
         recipients: list[str],
         subject: str,
         body_text: str,
+        attachments: list[ConnectorOutgoingAttachment] | None = None,
     ) -> ConnectorSendResult:
         return ConnectorSendResult(
             provider_message_id=f"fake-sent-{uuid.uuid4()}",

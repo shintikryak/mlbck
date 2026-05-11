@@ -1,9 +1,53 @@
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.message import Message
+
+
+def build_search_condition(query: str):
+    search_document = func.to_tsvector(
+        "simple",
+        func.concat_ws(
+            " ",
+            func.coalesce(Message.subject, ""),
+            func.coalesce(Message.sender, ""),
+            func.coalesce(Message.recipients, ""),
+            func.coalesce(Message.body_text, ""),
+        ),
+    )
+
+    search_query = func.websearch_to_tsquery("simple", query)
+
+    pattern = f"%{query}%"
+
+    return or_(
+        search_document.op("@@")(search_query),
+        Message.subject.ilike(pattern),
+        Message.sender.ilike(pattern),
+        Message.recipients.ilike(pattern),
+        Message.body_text.ilike(pattern),
+    )
+
+
+def build_messages_filters(
+    account_id: uuid.UUID,
+    folder_id: uuid.UUID | None = None,
+    query: str | None = None,
+):
+    filters = [
+        Message.account_id == account_id,
+        Message.is_deleted.is_(False),
+    ]
+
+    if folder_id is not None:
+        filters.append(Message.folder_id == folder_id)
+
+    if query:
+        filters.append(build_search_condition(query))
+
+    return filters
 
 
 async def list_messages(
@@ -11,30 +55,26 @@ async def list_messages(
     account_id: uuid.UUID,
     folder_id: uuid.UUID | None = None,
     query: str | None = None,
-) -> list[Message]:
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Message], int]:
+    filters = build_messages_filters(account_id, folder_id, query)
+
+    total_stmt = select(func.count()).select_from(Message).where(*filters)
+    total_result = await session.execute(total_stmt)
+    total = total_result.scalar_one()
+
     stmt = (
         select(Message)
-        .where(Message.account_id == account_id)
-        .where(Message.is_deleted.is_(False))
+        .where(*filters)
         .order_by(Message.sent_at.desc().nullslast(), Message.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
-
-    if folder_id is not None:
-        stmt = stmt.where(Message.folder_id == folder_id)
-
-    if query:
-        pattern = f"%{query}%"
-        stmt = stmt.where(
-            or_(
-                Message.subject.ilike(pattern),
-                Message.sender.ilike(pattern),
-                Message.body_text.ilike(pattern),
-            )
-        )
 
     result = await session.execute(stmt)
 
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total
 
 
 async def get_message(

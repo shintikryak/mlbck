@@ -23,6 +23,13 @@ class ConnectorMessage:
 
 
 @dataclass(frozen=True)
+class ConnectorOutgoingAttachment:
+    filename: str
+    content: bytes
+    content_type: str | None
+
+
+@dataclass(frozen=True)
 class ConnectorSendResult:
     provider_message_id: str
     sent_at: datetime
@@ -44,5 +51,6 @@ class MailboxConnector(Protocol):
         recipients: list[str],
         subject: str,
         body_text: str,
+        attachments: list[ConnectorOutgoingAttachment] | None = None,
     ) -> ConnectorSendResult:
         ...

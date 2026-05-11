@@ -23,6 +23,13 @@ class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MessageListResponse(BaseModel):
+    items: list[MessageRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class MessageReadUpdate(BaseModel):
     is_read: bool
 

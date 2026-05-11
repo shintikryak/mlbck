@@ -4,7 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.schemas.messages import MessageRead, MessageReadUpdate, MessageStarUpdate
+from app.schemas.messages import (
+    MessageListResponse,
+    MessageRead,
+    MessageReadUpdate,
+    MessageStarUpdate,
+)
 from app.services.messages import (
     delete_message,
     get_message,
@@ -17,14 +22,30 @@ from app.services.messages import (
 router = APIRouter()
 
 
-@router.get("/accounts/{account_id}/messages", response_model=list[MessageRead])
+@router.get("/accounts/{account_id}/messages", response_model=MessageListResponse)
 async def list_messages_endpoint(
     account_id: uuid.UUID,
     folder_id: uuid.UUID | None = Query(default=None),
     query: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
-    return await list_messages(session, account_id, folder_id, query)
+    items, total = await list_messages(
+        session=session,
+        account_id=account_id,
+        folder_id=folder_id,
+        query=query,
+        limit=limit,
+        offset=offset,
+    )
+
+    return MessageListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/messages/{message_id}", response_model=MessageRead)
