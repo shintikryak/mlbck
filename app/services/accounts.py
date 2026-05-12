@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mail_account import MailAccount
 from app.schemas.accounts import MailAccountCreate
-
+from app.core.security import encrypt_secret
 
 async def create_mail_account(
     session: AsyncSession,
@@ -19,7 +19,7 @@ async def create_mail_account(
         imap_port=data.imap_port,
         smtp_host=data.smtp_host,
         smtp_port=data.smtp_port,
-        encrypted_secret=data.secret,
+        encrypted_secret=encrypt_secret(data.secret),
     )
 
     session.add(account)

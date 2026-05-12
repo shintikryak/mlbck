@@ -3,6 +3,12 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.connectors.errors import (
+    MailProviderAuthError,
+    MailProviderConnectionError,
+    MailProviderSendError,
+    MailProviderTimeoutError,
+)
 from app.core.database import get_session
 from app.schemas.messages import MessageRead
 from app.services.send import send_message
@@ -50,6 +56,26 @@ async def send_message_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only fake and imap providers are supported at this stage",
+        )
+    except MailProviderAuthError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid SMTP credentials",
+        )
+    except MailProviderSendError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SMTP provider rejected the message or recipients",
+        )
+    except MailProviderTimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Mail provider timeout during sending",
+        )
+    except MailProviderConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Mail provider is unavailable during sending",
         )
 
     if message is None:

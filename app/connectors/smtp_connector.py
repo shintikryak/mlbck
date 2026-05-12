@@ -1,11 +1,19 @@
 import asyncio
 import mimetypes
 import smtplib
+import socket
+import ssl
 import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
 from app.connectors.base import ConnectorOutgoingAttachment, ConnectorSendResult
+from app.connectors.errors import (
+    MailProviderAuthError,
+    MailProviderConnectionError,
+    MailProviderSendError,
+    MailProviderTimeoutError,
+)
 
 
 class SmtpMailboxConnector:
@@ -65,15 +73,33 @@ class SmtpMailboxConnector:
                 filename=attachment.filename,
             )
 
-        if self.port == 465:
-            with smtplib.SMTP_SSL(self.host, self.port) as client:
-                client.login(self.email_address, self.password)
-                client.send_message(message)
-        else:
-            with smtplib.SMTP(self.host, self.port) as client:
-                client.starttls()
-                client.login(self.email_address, self.password)
-                client.send_message(message)
+        try:
+            if self.port == 465:
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=30) as client:
+                    client.login(self.email_address, self.password)
+                    client.send_message(message)
+            else:
+                with smtplib.SMTP(self.host, self.port, timeout=30) as client:
+                    client.starttls()
+                    client.login(self.email_address, self.password)
+                    client.send_message(message)
+        except smtplib.SMTPAuthenticationError as exc:
+            raise MailProviderAuthError("Invalid SMTP credentials") from exc
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise MailProviderSendError("SMTP provider rejected all recipients") from exc
+        except (smtplib.SMTPSenderRefused, smtplib.SMTPDataError) as exc:
+            raise MailProviderSendError("SMTP provider rejected the message") from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise MailProviderTimeoutError("SMTP provider timed out") from exc
+        except (
+            socket.gaierror,
+            ConnectionRefusedError,
+            smtplib.SMTPConnectError,
+            smtplib.SMTPServerDisconnected,
+            OSError,
+            ssl.SSLError,
+        ) as exc:
+            raise MailProviderConnectionError("Could not connect to SMTP provider") from exc
 
         return ConnectorSendResult(
             provider_message_id=f"smtp-sent-{uuid.uuid4()}",

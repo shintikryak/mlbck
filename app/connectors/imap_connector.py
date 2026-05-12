@@ -2,13 +2,25 @@ import asyncio
 import base64
 import imaplib
 import re
+import socket
+import ssl
 from datetime import datetime
 from email import message_from_bytes, policy
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import getaddresses, parsedate_to_datetime, parseaddr
 
-from app.connectors.base import ConnectorFolder, ConnectorMessage
+from app.connectors.base import (
+    ConnectorFolder,
+    ConnectorMessage,
+    ConnectorOutgoingAttachment,
+)
+from app.connectors.errors import (
+    MailProviderAuthError,
+    MailProviderConnectionError,
+    MailProviderMailboxError,
+    MailProviderTimeoutError,
+)
 
 
 class ImapMailboxConnector:
@@ -37,18 +49,53 @@ class ImapMailboxConnector:
         return await asyncio.to_thread(self._list_messages, folder_provider_id)
 
     def _connect(self) -> imaplib.IMAP4_SSL:
-        client = imaplib.IMAP4_SSL(self.host, self.port)
-        client.login(self.email_address, self.password)
+        try:
+            client = imaplib.IMAP4_SSL(self.host, self.port)
+        except (socket.timeout, TimeoutError) as exc:
+            raise MailProviderTimeoutError("IMAP connection timed out") from exc
+        except (socket.gaierror, ConnectionRefusedError, OSError, ssl.SSLError) as exc:
+            raise MailProviderConnectionError("Could not connect to IMAP provider") from exc
+
+        try:
+            client.login(self.email_address, self.password)
+        except imaplib.IMAP4.error as exc:
+            self._safe_logout(client)
+
+            error_text = str(exc).lower()
+
+            if (
+                "authenticationfailed" in error_text
+                or "invalid credentials" in error_text
+                or "imap is disabled" in error_text
+                or "login" in error_text
+            ):
+                raise MailProviderAuthError("Invalid IMAP credentials or IMAP is disabled") from exc
+
+            raise MailProviderConnectionError("IMAP login failed") from exc
+        except (socket.timeout, TimeoutError) as exc:
+            self._safe_logout(client)
+            raise MailProviderTimeoutError("IMAP login timed out") from exc
+        except (OSError, ssl.SSLError) as exc:
+            self._safe_logout(client)
+            raise MailProviderConnectionError("IMAP login connection error") from exc
+
         return client
 
     def _list_folders(self) -> list[ConnectorFolder]:
         client = self._connect()
 
         try:
-            status, data = client.list()
+            try:
+                status, data = client.list()
+            except (socket.timeout, TimeoutError) as exc:
+                raise MailProviderTimeoutError("IMAP folder listing timed out") from exc
+            except imaplib.IMAP4.error as exc:
+                raise MailProviderMailboxError("IMAP folder listing failed") from exc
+            except OSError as exc:
+                raise MailProviderConnectionError("IMAP folder listing connection error") from exc
 
             if status != "OK" or data is None:
-                return []
+                raise MailProviderMailboxError("IMAP provider returned invalid folder list")
 
             folders = []
 
@@ -73,7 +120,7 @@ class ImapMailboxConnector:
 
             return folders
         finally:
-            client.logout()
+            self._safe_logout(client)
 
     def _list_messages(self, folder_provider_id: str) -> list[ConnectorMessage]:
         client = self._connect()
@@ -82,7 +129,14 @@ class ImapMailboxConnector:
             if not self._select_folder(client, folder_provider_id):
                 return []
 
-            status, data = client.uid("search", None, "ALL")
+            try:
+                status, data = client.uid("search", None, "ALL")
+            except (socket.timeout, TimeoutError) as exc:
+                raise MailProviderTimeoutError("IMAP message search timed out") from exc
+            except imaplib.IMAP4.error as exc:
+                raise MailProviderMailboxError("IMAP message search failed") from exc
+            except OSError as exc:
+                raise MailProviderConnectionError("IMAP message search connection error") from exc
 
             if status != "OK" or not data or not data[0]:
                 return []
@@ -93,7 +147,14 @@ class ImapMailboxConnector:
             messages = []
 
             for uid in selected_uids:
-                status, fetch_data = client.uid("fetch", uid, "(RFC822 FLAGS)")
+                try:
+                    status, fetch_data = client.uid("fetch", uid, "(RFC822 FLAGS)")
+                except (socket.timeout, TimeoutError) as exc:
+                    raise MailProviderTimeoutError("IMAP message fetch timed out") from exc
+                except imaplib.IMAP4.error:
+                    continue
+                except OSError as exc:
+                    raise MailProviderConnectionError("IMAP message fetch connection error") from exc
 
                 if status != "OK" or not fetch_data:
                     continue
@@ -111,26 +172,30 @@ class ImapMailboxConnector:
                 if raw_message is None:
                     continue
 
-                parsed = message_from_bytes(raw_message, policy=policy.default)
-                flags_text = flags_raw.decode(errors="ignore")
+                try:
+                    parsed = message_from_bytes(raw_message, policy=policy.default)
+                    flags_text = flags_raw.decode(errors="ignore")
 
-                messages.append(
-                    ConnectorMessage(
-                        provider_message_id=uid.decode(errors="ignore"),
-                        folder_provider_id=folder_provider_id,
-                        subject=self._decode_mime_header(parsed.get("Subject")),
-                        sender=self._extract_sender(parsed),
-                        recipients=self._extract_recipients(parsed),
-                        body_text=self._extract_body_text(parsed),
-                        sent_at=self._extract_sent_at(parsed),
-                        is_read="\\Seen" in flags_text,
-                        is_starred="\\Flagged" in flags_text,
+                    messages.append(
+                        ConnectorMessage(
+                            provider_message_id=uid.decode(errors="ignore"),
+                            folder_provider_id=folder_provider_id,
+                            subject=self._decode_mime_header(parsed.get("Subject")),
+                            sender=self._extract_sender(parsed),
+                            recipients=self._extract_recipients(parsed),
+                            body_text=self._extract_body_text(parsed),
+                            sent_at=self._extract_sent_at(parsed),
+                            is_read="\\Seen" in flags_text,
+                            is_starred="\\Flagged" in flags_text,
+                            attachments=self._extract_attachments(parsed),
+                        )
                     )
-                )
+                except Exception:
+                    continue
 
             return messages
         finally:
-            client.logout()
+            self._safe_logout(client)
 
     def _select_folder(self, client: imaplib.IMAP4_SSL, folder_provider_id: str) -> bool:
         variants = [
@@ -146,6 +211,10 @@ class ImapMailboxConnector:
                     return True
             except imaplib.IMAP4.error:
                 continue
+            except (socket.timeout, TimeoutError) as exc:
+                raise MailProviderTimeoutError("IMAP folder select timed out") from exc
+            except OSError as exc:
+                raise MailProviderConnectionError("IMAP folder select connection error") from exc
 
         return False
 
@@ -305,6 +374,48 @@ class ImapMailboxConnector:
             return self._strip_html(content)
 
         return content
+    
+    def _extract_attachments(self, message: Message) -> list[ConnectorOutgoingAttachment]:
+        if not message.is_multipart():
+            return []
+
+        attachments = []
+
+        for part in message.walk():
+            content_disposition = part.get_content_disposition()
+            filename = part.get_filename()
+
+            if content_disposition != "attachment" and not filename:
+                continue
+
+            payload = part.get_payload(decode=True)
+
+            if not payload:
+                continue
+
+            decoded_filename = self._decode_attachment_filename(filename)
+
+            attachments.append(
+                ConnectorOutgoingAttachment(
+                    filename=decoded_filename,
+                    content=payload,
+                    content_type=part.get_content_type() or "application/octet-stream",
+                )
+            )
+
+        return attachments
+
+
+    def _decode_attachment_filename(self, filename: str | None) -> str:
+        if not filename:
+            return "attachment"
+
+        decoded = self._decode_mime_header(filename)
+
+        if not decoded:
+            return "attachment"
+
+        return decoded
 
     def _safe_get_content(self, message: Message) -> str | None:
         try:
@@ -329,3 +440,9 @@ class ImapMailboxConnector:
 
     def _strip_html(self, value: str) -> str:
         return re.sub(r"<[^>]+>", " ", value).strip()
+
+    def _safe_logout(self, client: imaplib.IMAP4_SSL) -> None:
+        try:
+            client.logout()
+        except Exception:
+            pass

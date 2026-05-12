@@ -36,6 +36,13 @@ class FakeMailboxConnector:
                     sent_at=datetime(2026, 4, 25, 10, 0, tzinfo=timezone.utc),
                     is_read=False,
                     is_starred=True,
+                    attachments=[
+                        ConnectorOutgoingAttachment(
+                            filename="welcome.txt",
+                            content=b"Welcome attachment from fake IMAP sync",
+                            content_type="text/plain",
+                        )
+                    ],
                 ),
                 ConnectorMessage(
                     provider_message_id="fake-inbox-2",

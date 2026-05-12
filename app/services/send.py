@@ -13,6 +13,7 @@ from app.models.message import Message
 from app.services.accounts import get_mail_account
 from app.services.sync import MissingCredentialsError, UnsupportedProviderError
 from app.storage.s3 import upload_file
+from app.core.security import decrypt_secret
 
 
 async def get_or_create_sent_folder(
@@ -62,12 +63,14 @@ def build_send_connector(account):
         return FakeMailboxConnector(account.email)
 
     if account.provider == "imap":
-        if not account.encrypted_secret:
+        secret = decrypt_secret(account.encrypted_secret)
+
+        if not secret:
             raise MissingCredentialsError
 
         return SmtpMailboxConnector(
             email_address=account.email,
-            password=account.encrypted_secret,
+            password=secret,
             host=account.smtp_host,
             port=account.smtp_port,
         )

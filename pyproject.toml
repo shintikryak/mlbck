@@ -15,6 +15,7 @@ dependencies = [
     "httpx",
     "pytest",
     "pytest-asyncio",
+    "cryptography",
 ]
 
 [tool.pytest.ini_options]

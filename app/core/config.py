@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     app_name: str = "Mailback"
     app_env: str = "local"
     api_v1_prefix: str = "/api/v1"
+    secret_encryption_key: str | None = None
 
     postgres_host: str = "postgres"
     postgres_port: int = 5432

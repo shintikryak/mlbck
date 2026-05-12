@@ -10,6 +10,13 @@ class ConnectorFolder:
 
 
 @dataclass(frozen=True)
+class ConnectorOutgoingAttachment:
+    filename: str
+    content: bytes
+    content_type: str | None
+
+
+@dataclass(frozen=True)
 class ConnectorMessage:
     provider_message_id: str
     folder_provider_id: str
@@ -20,13 +27,7 @@ class ConnectorMessage:
     sent_at: datetime | None
     is_read: bool = False
     is_starred: bool = False
-
-
-@dataclass(frozen=True)
-class ConnectorOutgoingAttachment:
-    filename: str
-    content: bytes
-    content_type: str | None
+    attachments: list[ConnectorOutgoingAttachment] | None = None
 
 
 @dataclass(frozen=True)
