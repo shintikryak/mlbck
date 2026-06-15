@@ -55,3 +55,19 @@ class MailboxConnector(Protocol):
         attachments: list[ConnectorOutgoingAttachment] | None = None,
     ) -> ConnectorSendResult:
         ...
+    
+    async def set_message_read(
+        self,
+        folder_provider_id: str,
+        provider_message_id: str,
+        is_read: bool,
+    ) -> None:
+        ...
+
+    async def set_message_starred(
+        self,
+        folder_provider_id: str,
+        provider_message_id: str,
+        is_starred: bool,
+    ) -> None:
+        ...

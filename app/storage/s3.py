@@ -6,6 +6,9 @@ from botocore.exceptions import ClientError
 
 from app.core.config import settings
 
+def check_object_storage() -> None:
+    client = get_s3_client()
+    client.head_bucket(Bucket=settings.minio_bucket)
 
 def get_s3_client():
     return boto3.client(

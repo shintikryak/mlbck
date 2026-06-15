@@ -4,6 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.connectors.errors import (
+    MailProviderAuthError,
+    MailProviderConnectionError,
+    MailProviderMailboxError,
+    MailProviderTimeoutError,
+)
 from app.schemas.messages import (
     MessageListResponse,
     MessageRead,
@@ -21,6 +27,23 @@ from app.services.messages import (
 
 router = APIRouter()
 
+def build_provider_http_exception(exc: Exception) -> HTTPException:
+    if isinstance(exc, MailProviderAuthError):
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    if isinstance(exc, MailProviderTimeoutError):
+        return HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc),
+        )
+
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=str(exc),
+    )
 
 @router.get("/accounts/{account_id}/messages", response_model=MessageListResponse)
 async def list_messages_endpoint(
@@ -70,7 +93,15 @@ async def set_message_read_endpoint(
     data: MessageReadUpdate,
     session: AsyncSession = Depends(get_session),
 ):
-    message = await set_message_read(session, message_id, data.is_read)
+    try:
+        message = await set_message_read(session, message_id, data.is_read)
+    except (
+        MailProviderAuthError,
+        MailProviderConnectionError,
+        MailProviderMailboxError,
+        MailProviderTimeoutError,
+    ) as exc:
+        raise build_provider_http_exception(exc) from exc
 
     if message is None:
         raise HTTPException(
@@ -87,7 +118,15 @@ async def set_message_starred_endpoint(
     data: MessageStarUpdate,
     session: AsyncSession = Depends(get_session),
 ):
-    message = await set_message_starred(session, message_id, data.is_starred)
+    try:
+        message = await set_message_starred(session, message_id, data.is_starred)
+    except (
+        MailProviderAuthError,
+        MailProviderConnectionError,
+        MailProviderMailboxError,
+        MailProviderTimeoutError,
+    ) as exc:
+        raise build_provider_http_exception(exc) from exc
 
     if message is None:
         raise HTTPException(

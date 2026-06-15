@@ -17,7 +17,12 @@ from app.services.sync import MissingCredentialsError, UnsupportedProviderError
 router = APIRouter()
 
 
-@router.post("/accounts/{account_id}/send", response_model=MessageRead)
+@router.post(
+    "/accounts/{account_id}/send",
+    response_model=MessageRead,
+    summary="Send email message",
+    description="Sends an email through the configured SMTP provider. The request supports an optional file attachment using multipart/form-data.",
+)
 async def send_message_endpoint(
     account_id: uuid.UUID,
     recipients: str = Form(...),

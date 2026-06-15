@@ -48,6 +48,34 @@ class ImapMailboxConnector:
     ) -> list[ConnectorMessage]:
         return await asyncio.to_thread(self._list_messages, folder_provider_id)
 
+    async def set_message_read(
+        self,
+        folder_provider_id: str,
+        provider_message_id: str,
+        is_read: bool,
+    ) -> None:
+        await asyncio.to_thread(
+            self._set_message_flag,
+            folder_provider_id,
+            provider_message_id,
+            "\\Seen",
+            is_read,
+        )
+
+    async def set_message_starred(
+        self,
+        folder_provider_id: str,
+        provider_message_id: str,
+        is_starred: bool,
+    ) -> None:
+        await asyncio.to_thread(
+            self._set_message_flag,
+            folder_provider_id,
+            provider_message_id,
+            "\\Flagged",
+            is_starred,
+        )
+
     def _connect(self) -> imaplib.IMAP4_SSL:
         try:
             client = imaplib.IMAP4_SSL(self.host, self.port)
@@ -196,6 +224,65 @@ class ImapMailboxConnector:
             return messages
         finally:
             self._safe_logout(client)
+
+    def _set_message_flag(
+        self,
+        folder_provider_id: str,
+        provider_message_id: str,
+        flag: str,
+        enabled: bool,
+    ) -> None:
+        client = self._connect()
+
+        try:
+            if not self._select_folder_for_write(client, folder_provider_id):
+                raise MailProviderMailboxError("IMAP folder select failed")
+
+            action = "+FLAGS" if enabled else "-FLAGS"
+
+            try:
+                status, _ = client.uid(
+                    "store",
+                    provider_message_id,
+                    action,
+                    f"({flag})",
+                )
+            except (socket.timeout, TimeoutError) as exc:
+                raise MailProviderTimeoutError("IMAP flag update timed out") from exc
+            except imaplib.IMAP4.error as exc:
+                raise MailProviderMailboxError("IMAP flag update failed") from exc
+            except OSError as exc:
+                raise MailProviderConnectionError("IMAP flag update connection error") from exc
+
+            if status != "OK":
+                raise MailProviderMailboxError("IMAP flag update failed")
+        finally:
+            self._safe_logout(client)
+
+    def _select_folder_for_write(
+        self,
+        client: imaplib.IMAP4_SSL,
+        folder_provider_id: str,
+    ) -> bool:
+        variants = [
+            folder_provider_id,
+            self._quote_folder_name(folder_provider_id),
+        ]
+
+        for variant in variants:
+            try:
+                status, _ = client.select(variant, readonly=False)
+
+                if status == "OK":
+                    return True
+            except imaplib.IMAP4.error:
+                continue
+            except (socket.timeout, TimeoutError) as exc:
+                raise MailProviderTimeoutError("IMAP folder select timed out") from exc
+            except OSError as exc:
+                raise MailProviderConnectionError("IMAP folder select connection error") from exc
+
+        return False
 
     def _select_folder(self, client: imaplib.IMAP4_SSL, folder_provider_id: str) -> bool:
         variants = [
