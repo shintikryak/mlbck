@@ -16,7 +16,12 @@ from app.services.sync import MissingCredentialsError, UnsupportedProviderError,
 router = APIRouter()
 
 
-@router.post("/accounts/{account_id}/sync", response_model=SyncResult)
+@router.post(
+    "/accounts/{account_id}/sync",
+    response_model=SyncResult,
+    summary="Synchronize mailbox account",
+    description="Synchronizes folders, messages and incoming attachments from the configured mailbox provider. The operation is idempotent and does not create duplicate messages on repeated runs.",
+)
 async def sync_account_endpoint(
     account_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),

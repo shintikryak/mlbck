@@ -2,8 +2,11 @@ import uuid
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.message import Message
+from app.connectors.imap_connector import ImapMailboxConnector
+from app.core.security import decrypt_secret
 
 
 def build_search_condition(query: str):
@@ -86,16 +89,76 @@ async def get_message(
 
     return result.scalar_one_or_none()
 
+async def get_message_with_provider_data(
+    session: AsyncSession,
+    message_id: uuid.UUID,
+) -> Message | None:
+    stmt = (
+        select(Message)
+        .options(
+            selectinload(Message.account),
+            selectinload(Message.folder),
+        )
+        .where(Message.id == message_id)
+    )
+    result = await session.execute(stmt)
+
+    return result.scalar_one_or_none()
+
+
+def build_imap_connector_for_message(message: Message) -> ImapMailboxConnector | None:
+    if message.account.provider != "imap":
+        return None
+
+    secret = decrypt_secret(message.account.encrypted_secret)
+
+    if not secret:
+        return None
+
+    return ImapMailboxConnector(
+        email_address=message.account.email,
+        password=secret,
+        host=message.account.imap_host,
+        port=message.account.imap_port,
+    )
+
+
+async def update_provider_read_flag(message: Message, is_read: bool) -> None:
+    connector = build_imap_connector_for_message(message)
+
+    if connector is None:
+        return
+
+    await connector.set_message_read(
+        folder_provider_id=message.folder.provider_folder_id,
+        provider_message_id=message.provider_message_id,
+        is_read=is_read,
+    )
+
+
+async def update_provider_starred_flag(message: Message, is_starred: bool) -> None:
+    connector = build_imap_connector_for_message(message)
+
+    if connector is None:
+        return
+
+    await connector.set_message_starred(
+        folder_provider_id=message.folder.provider_folder_id,
+        provider_message_id=message.provider_message_id,
+        is_starred=is_starred,
+    )
 
 async def set_message_read(
     session: AsyncSession,
     message_id: uuid.UUID,
     is_read: bool,
 ) -> Message | None:
-    message = await get_message(session, message_id)
+    message = await get_message_with_provider_data(session, message_id)
 
     if message is None:
         return None
+
+    await update_provider_read_flag(message, is_read)
 
     message.is_read = is_read
 
@@ -110,10 +173,12 @@ async def set_message_starred(
     message_id: uuid.UUID,
     is_starred: bool,
 ) -> Message | None:
-    message = await get_message(session, message_id)
+    message = await get_message_with_provider_data(session, message_id)
 
     if message is None:
         return None
+
+    await update_provider_starred_flag(message, is_starred)
 
     message.is_starred = is_starred
 
